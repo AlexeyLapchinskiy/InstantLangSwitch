@@ -8,7 +8,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var monitoringMenuItem: NSMenuItem!
     private var setupWindow: SetupWindowController?
     private var settingsWindow: NSWindow?
-    private var startupCheckbox: NSButton?
+    private var startupToggle: NSSwitch?
+    private var startupApprovalLabel: NSTextField?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureMenu()
@@ -21,7 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidBecomeActive(_ notification: Notification) {
         refreshMonitoring()
-        refreshStartupCheckbox()
+        refreshStartupToggle()
         if setupWindow?.window?.isVisible == true {
             setupWindow?.refresh()
         }
@@ -105,45 +106,84 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func showSettings() {
         if settingsWindow == nil {
+            let bundle = Bundle.main
+            let appName = bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "Instant Lang Switch"
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 280, height: 92),
+                contentRect: NSRect(x: 0, y: 0, width: 344, height: 126),
                 styleMask: [.titled, .closable],
                 backing: .buffered,
                 defer: false
             )
-            window.title = "Instant Lang Switch"
+            window.title = "\(appName) Settings"
             window.isReleasedWhenClosed = false
 
-            let checkbox = NSButton(checkboxWithTitle: "Open on startup", target: self, action: #selector(changeStartup(_:)))
-            checkbox.translatesAutoresizingMaskIntoConstraints = false
+            let startupLabel = NSTextField(labelWithString: "Open on startup")
+            let approvalLabel = NSTextField(labelWithString: "Approval required in Login Items")
+            approvalLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+            approvalLabel.textColor = .secondaryLabelColor
+
+            let toggle = NSSwitch()
+            toggle.target = self
+            toggle.action = #selector(changeStartup(_:))
+            toggle.setAccessibilityLabel(startupLabel.stringValue)
+
+            let separator = NSBox()
+            separator.boxType = .separator
+
+            var footerText = appName
+            if let version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String {
+                footerText += " · Version \(version)"
+                if let build = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String {
+                    footerText += " (\(build))"
+                }
+            }
+            let footer = NSTextField(labelWithString: footerText)
+            footer.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+            footer.textColor = .secondaryLabelColor
+
             if let contentView = window.contentView {
-                contentView.addSubview(checkbox)
+                for view in [startupLabel, approvalLabel, toggle, separator, footer] {
+                    view.translatesAutoresizingMaskIntoConstraints = false
+                    contentView.addSubview(view)
+                }
                 NSLayoutConstraint.activate([
-                    checkbox.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
-                    checkbox.centerYAnchor.constraint(equalTo: contentView.centerYAnchor)
+                    toggle.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 23),
+                    toggle.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
+                    startupLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
+                    startupLabel.centerYAnchor.constraint(equalTo: toggle.centerYAnchor),
+                    startupLabel.trailingAnchor.constraint(lessThanOrEqualTo: toggle.leadingAnchor, constant: -12),
+                    approvalLabel.leadingAnchor.constraint(equalTo: startupLabel.leadingAnchor),
+                    approvalLabel.topAnchor.constraint(equalTo: startupLabel.bottomAnchor, constant: 5),
+                    separator.leadingAnchor.constraint(equalTo: startupLabel.leadingAnchor),
+                    separator.trailingAnchor.constraint(equalTo: toggle.trailingAnchor),
+                    separator.heightAnchor.constraint(equalToConstant: 1),
+                    separator.bottomAnchor.constraint(equalTo: footer.topAnchor, constant: -12),
+                    footer.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+                    footer.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -16)
                 ])
             }
 
             window.center()
-            startupCheckbox = checkbox
+            startupToggle = toggle
+            startupApprovalLabel = approvalLabel
             settingsWindow = window
         }
-        refreshStartupCheckbox()
+        refreshStartupToggle()
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
     }
 
-    private func refreshStartupCheckbox() {
-        guard let startupCheckbox else { return }
+    private func refreshStartupToggle() {
+        guard let startupToggle else { return }
         let status = loginItem.status
         let needsApproval = status == .requiresApproval
-        startupCheckbox.allowsMixedState = needsApproval
-        startupCheckbox.state = needsApproval ? .mixed : (status == .enabled ? .on : .off)
-        startupCheckbox.toolTip = needsApproval ? "Approve Instant Lang Switch in Login Items" : nil
+        startupToggle.state = status == .enabled || needsApproval ? .on : .off
+        startupToggle.toolTip = needsApproval ? "Approve Instant Lang Switch in Login Items" : nil
+        startupApprovalLabel?.isHidden = !needsApproval
     }
 
-    @objc private func changeStartup(_ sender: NSButton) {
-        defer { refreshStartupCheckbox() }
+    @objc private func changeStartup(_ sender: NSSwitch) {
+        defer { refreshStartupToggle() }
         do {
             if sender.state == .on {
                 try loginItem.register()

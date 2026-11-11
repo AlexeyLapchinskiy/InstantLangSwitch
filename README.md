@@ -22,7 +22,7 @@ On first launch, the setup window shows the keyboard permission and Globe-key st
 
 ## Open on startup
 
-Choose **Settings…** from the Instant Lang Switch menu bar icon and check **Open on startup**. If macOS asks for approval, choose **Open Login Items** and enable the app. You can stop switching at any time by choosing **Quit Instant Lang Switch** from the same menu.
+Choose **Settings…** from the Instant Lang Switch menu bar icon and turn on **Open on startup**. If macOS asks for approval, choose **Open Login Items** and enable the app. You can stop switching at any time by choosing **Quit Instant Lang Switch** from the same menu.
 
 ## Build from source
 
