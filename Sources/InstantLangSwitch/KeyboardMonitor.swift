@@ -1,8 +1,19 @@
 import CoreGraphics
 import Foundation
 import IOKit.hid
+import IOKit.hidsystem
 
 final class KeyboardMonitor {
+    static var hasInputMonitoringAccess: Bool {
+        IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted
+    }
+
+    static func requestInputMonitoringAccessIfUndetermined() {
+        if IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeUnknown {
+            IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
+        }
+    }
+
     private static let chordModifiers: CGEventFlags = [
         .maskCommand, .maskControl, .maskAlternate, .maskShift
     ]

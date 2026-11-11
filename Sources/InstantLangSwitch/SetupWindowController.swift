@@ -14,7 +14,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private let keyboardButton = NSButton(title: "Open Keyboard Preferences", target: nil, action: nil)
     private let grantedLabel = NSTextField(labelWithString: "Granted")
     private let doneLabel = NSTextField(labelWithString: "Done")
-    private let inputMonitoringChanged: () -> Void
+    private let defaults: UserDefaults
+    private let inputMonitoringChanged: (Bool) -> Void
     private var lastInputMonitoringStatus: Bool?
     private var refreshTimer: Timer?
 
@@ -22,7 +23,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         UserDefaults.standard.bool(forKey: setupCompletedKey)
     }
 
-    init(inputMonitoringChanged: @escaping () -> Void) {
+    init(defaults: UserDefaults = .standard, inputMonitoringChanged: @escaping (Bool) -> Void) {
+        self.defaults = defaults
         self.inputMonitoringChanged = inputMonitoringChanged
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 556, height: 154),
@@ -59,10 +61,9 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         refreshTimer = nil
     }
 
-    func refresh() {
-        let defaults = UserDefaults.standard
+    func refresh(inputMonitoringGranted: Bool = KeyboardMonitor.hasInputMonitoringAccess) {
         let progress = SetupProgress(
-            inputMonitoringGranted: CGPreflightListenEventAccess(),
+            inputMonitoringGranted: inputMonitoringGranted,
             globeKeyAction: Self.readGlobeKeyAction(),
             keyboardOpenedAt: defaults.object(forKey: Self.keyboardOpenedAtKey) as? Date,
             now: Date()
@@ -75,17 +76,15 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
         if lastInputMonitoringStatus != progress.inputMonitoringGranted {
             lastInputMonitoringStatus = progress.inputMonitoringGranted
-            inputMonitoringChanged()
+            inputMonitoringChanged(progress.inputMonitoringGranted)
         }
-        if progress.isComplete, !Self.hasCompletedSetup {
+        if progress.isComplete, !defaults.bool(forKey: Self.setupCompletedKey) {
             defaults.set(true, forKey: Self.setupCompletedKey)
         }
     }
 
     static func openInputMonitoring() {
-        if !CGPreflightListenEventAccess() {
-            CGRequestListenEventAccess()
-        }
+        KeyboardMonitor.requestInputMonitoringAccessIfUndetermined()
         NSWorkspace.shared.open(inputMonitoringURL)
     }
 
@@ -105,7 +104,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func openKeyboardPreferences() {
         if NSWorkspace.shared.open(Self.keyboardSettingsURL) {
-            UserDefaults.standard.set(Date(), forKey: Self.keyboardOpenedAtKey)
+            defaults.set(Date(), forKey: Self.keyboardOpenedAtKey)
         }
         refresh()
     }
@@ -120,7 +119,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
         let grid = NSGridView(views: [
             [
-                instruction("1. Allow keyboard input access", detail: "Enable Instant Lang Switch in Input Monitoring."),
+                instruction("1. Allow keyboard input access", detail: "Enable it in Input Monitoring. Reopen if prompted."),
                 actionView(button: grantButton, status: grantedLabel)
             ],
             [

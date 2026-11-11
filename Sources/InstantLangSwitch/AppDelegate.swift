@@ -71,9 +71,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = menu
     }
 
-    private func refreshMonitoring() {
+    private func refreshMonitoring(inputMonitoringGranted: Bool = KeyboardMonitor.hasInputMonitoringAccess) {
         guard let monitoringMenuItem else { return }
-        if CGPreflightListenEventAccess() {
+        if inputMonitoringGranted {
             let started = keyboardMonitor.start()
             monitoringMenuItem.title = "Retry Keyboard Monitoring"
             monitoringMenuItem.isHidden = started
@@ -85,7 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func enableInputMonitoring() {
-        if !CGPreflightListenEventAccess() {
+        if !KeyboardMonitor.hasInputMonitoringAccess {
             SetupWindowController.openInputMonitoring()
         }
         refreshMonitoring()
@@ -93,8 +93,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func showSetup() {
         if setupWindow == nil {
-            setupWindow = SetupWindowController { [weak self] in
-                self?.refreshMonitoring()
+            setupWindow = SetupWindowController { [weak self] granted in
+                self?.refreshMonitoring(inputMonitoringGranted: granted)
             }
         }
         NSApp.activate(ignoringOtherApps: true)
