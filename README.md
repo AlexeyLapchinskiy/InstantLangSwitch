@@ -36,5 +36,3 @@ The build creates `dist/InstantLangSwitch.dmg` and ad-hoc signs the app for loca
 ## How it works
 
 The app uses IOKit to detect a standalone Fn / Globe tap and macOS’s Text Input Source API to select the next layout. Input Monitoring allows it to detect the tap while another app is active. Keyboard events are processed in memory and are never stored or transmitted.
-
-Inspired by [Fn Lang Switch](https://github.com/tonku321/fn-lang-switcher) and [LangSwitch](https://github.com/Nikeev/LangSwitch). The HID approach is described in [BetterSwitch’s implementation notes](https://github.com/hamet/betterswitch#how-it-works).
