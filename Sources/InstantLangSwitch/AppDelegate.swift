@@ -93,7 +93,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func showSetup() {
         if setupWindow == nil {
-            setupWindow = SetupWindowController { [weak self] granted in
+            setupWindow = SetupWindowController(openSettings: { [weak self] in
+                self?.showSettings()
+            }) { [weak self] granted in
                 self?.refreshMonitoring(inputMonitoringGranted: granted)
             }
         }

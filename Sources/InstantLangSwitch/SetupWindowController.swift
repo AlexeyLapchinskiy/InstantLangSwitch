@@ -15,16 +15,23 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private let grantedLabel = NSTextField(labelWithString: "Granted")
     private let doneLabel = NSTextField(labelWithString: "Done")
     private let defaults: UserDefaults
+    private let openSettings: () -> Void
     private let inputMonitoringChanged: (Bool) -> Void
     private var lastInputMonitoringStatus: Bool?
     private var refreshTimer: Timer?
+    private var completedAt: TimeInterval?
 
     static var hasCompletedSetup: Bool {
         UserDefaults.standard.bool(forKey: setupCompletedKey)
     }
 
-    init(defaults: UserDefaults = .standard, inputMonitoringChanged: @escaping (Bool) -> Void) {
+    init(
+        defaults: UserDefaults = .standard,
+        openSettings: @escaping () -> Void,
+        inputMonitoringChanged: @escaping (Bool) -> Void
+    ) {
         self.defaults = defaults
+        self.openSettings = openSettings
         self.inputMonitoringChanged = inputMonitoringChanged
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 556, height: 154),
@@ -45,7 +52,6 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     }
 
     override func showWindow(_ sender: Any?) {
-        refresh()
         super.showWindow(sender)
         if refreshTimer == nil {
             let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
@@ -54,17 +60,23 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             RunLoop.main.add(timer, forMode: .common)
             refreshTimer = timer
         }
+        refresh()
     }
 
     func windowWillClose(_ notification: Notification) {
         refreshTimer?.invalidate()
         refreshTimer = nil
+        completedAt = nil
     }
 
-    func refresh(inputMonitoringGranted: Bool = KeyboardMonitor.hasInputMonitoringAccess) {
+    func refresh(
+        inputMonitoringGranted: Bool = KeyboardMonitor.hasInputMonitoringAccess,
+        globeKeyAction: Int? = SetupWindowController.readGlobeKeyAction(),
+        uptime: TimeInterval = ProcessInfo.processInfo.systemUptime
+    ) {
         let progress = SetupProgress(
             inputMonitoringGranted: inputMonitoringGranted,
-            globeKeyAction: Self.readGlobeKeyAction(),
+            globeKeyAction: globeKeyAction,
             keyboardOpenedAt: defaults.object(forKey: Self.keyboardOpenedAtKey) as? Date,
             now: Date()
         )
@@ -80,6 +92,23 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         }
         if progress.isComplete, !defaults.bool(forKey: Self.setupCompletedKey) {
             defaults.set(true, forKey: Self.setupCompletedKey)
+        }
+        guard progress.isComplete, window?.isVisible == true else {
+            completedAt = nil
+            return
+        }
+
+        let completedAt = self.completedAt ?? uptime
+        self.completedAt = completedAt
+        let remaining = 10 - (uptime - completedAt)
+        if remaining <= 0 {
+            close()
+            openSettings()
+        } else if let refreshTimer {
+            let deadline = Date(timeIntervalSinceNow: remaining)
+            if deadline < refreshTimer.fireDate {
+                refreshTimer.fireDate = deadline
+            }
         }
     }
 
