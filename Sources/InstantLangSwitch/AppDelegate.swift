@@ -133,9 +133,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             var footerText = appName
             if let version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String {
                 footerText += " · Version \(version)"
-                if let build = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String {
-                    footerText += " (\(build))"
-                }
             }
             let footer = NSTextField(labelWithString: footerText)
             footer.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
