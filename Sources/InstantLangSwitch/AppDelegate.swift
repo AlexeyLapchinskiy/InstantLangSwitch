@@ -38,7 +38,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func configureMenu() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.button?.image = NSImage(systemSymbolName: "globe", accessibilityDescription: "Instant Lang Switch")
+        if let image = NSImage(systemSymbolName: "arrow.left.arrow.right", accessibilityDescription: "Instant Lang Switch") {
+            image.isTemplate = true
+            statusItem.button?.image = image
+        } else {
+            statusItem.button?.title = "⇄"
+        }
         statusItem.button?.toolTip = "Instant Lang Switch"
 
         let menu = NSMenu()

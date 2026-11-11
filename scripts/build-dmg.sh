@@ -12,9 +12,10 @@ bin_path=$(swift build "${build_options[@]}" --show-bin-path)
 staging=$(mktemp -d)
 trap 'rm -rf "$staging"' EXIT
 app="$staging/Instant Lang Switch.app"
-mkdir -p "$app/Contents/MacOS"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 install -m 755 "$bin_path/InstantLangSwitch" "$app/Contents/MacOS/InstantLangSwitch"
 install -m 644 Info.plist "$app/Contents/Info.plist"
+install -m 644 Resources/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
 codesign --force --sign "${CODESIGN_IDENTITY:--}" --options runtime "$app"
 codesign --verify --strict "$app"
 lipo "$app/Contents/MacOS/InstantLangSwitch" -verify_arch arm64
