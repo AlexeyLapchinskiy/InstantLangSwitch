@@ -15,6 +15,7 @@ Download and open `InstantLangSwitch.dmg`, drag **Instant Lang Switch** to **App
 The release build is ad-hoc signed and unnotarized, so macOS may block it on first launch. You can build a local copy using the instructions below. [Apple’s guide to opening downloaded apps](https://support.apple.com/en-us/102445)
 
 On first launch, the setup window shows the keyboard permission and Globe-key steps below. You can reopen it from **Setup…** in the app’s menu bar menu.
+Use **Start Test** in Setup to see the active layout and confirm a switch from a physical Fn tap.
 
 1. In **System Settings → Keyboard**, set **Press 🌐 key to** or **Press fn key to** to **Do Nothing**. This turns off the built-in picker. Under **Text Input → Edit**, make sure at least two input sources are enabled. [Apple Keyboard settings](https://support.apple.com/guide/mac-help/kbdm162/mac)
 2. In **System Settings → Privacy & Security → Input Monitoring**, allow **Instant Lang Switch**. The app’s menu bar icon has an **Enable Input Monitoring…** item that opens this pane. Quit and reopen the app if macOS prompts you. [Apple Input Monitoring settings](https://support.apple.com/guide/mac-help/mchl4cedafb6/mac)
@@ -23,6 +24,16 @@ On first launch, the setup window shows the keyboard permission and Globe-key st
 ## Open on startup
 
 Choose **Settings…** from the Instant Lang Switch menu bar icon and turn on **Open on startup**. If macOS asks for approval, choose **Open Login Items** and enable the app. You can stop switching at any time by choosing **Quit Instant Lang Switch** from the same menu.
+
+## Layouts, app rules and shortcuts
+
+These features are available in the 0.2.1 build from source.
+
+- In **Settings → Layouts**, choose favorites and use the arrows to set their order. Fn and the alternate switching shortcut cycle through the available favorites. When no favorites are available, they cycle through all enabled layouts.
+- In **Settings → General**, enable **Show active layout in the menu bar** to see its language code. Click the menu bar item to select any enabled layout directly.
+- In **Settings → App Rules**, add an app and choose the layout to select when it becomes active. A manual switch applies until you enter an app with a default again.
+- In **Settings → Shortcuts**, record an alternate key combination for switching layouts or correcting selected text. Use Command, Control or Option with another key.
+- For **Correct selected text**, choose the layouts under **Typed with** and **Convert to**, select editable text, and press the recorded shortcut. Approve Accessibility access on first use. Correction uses physical key positions and preserves characters it cannot map. It works in editable fields that support Accessibility text replacement and leaves secure fields alone.
 
 ## Build from source
 

@@ -1,19 +1,42 @@
 import AppKit
+import Combine
 import ServiceManagement
+import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let keyboardMonitor = KeyboardMonitor()
     private let loginItem = SMAppService.mainApp
+    private let preferences = Preferences()
+    private lazy var globalShortcuts = GlobalShortcuts { [weak self] action in
+        switch action {
+        case .switchLayout: self?.switchLayout(fromFn: false)
+        case .correctSelection: self?.correctSelectedText()
+        }
+    }
+
     private var statusItem: NSStatusItem!
     private var monitoringMenuItem: NSMenuItem!
+    private var layoutMenuItems: [NSMenuItem] = []
+    private var menuBarPreference: AnyCancellable?
     private var setupWindow: SetupWindowController?
     private var settingsWindow: NSWindow?
-    private var startupToggle: NSSwitch?
-    private var startupApprovalLabel: NSTextField?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureMenu()
+        observeInputSources()
+        keyboardMonitor.onTap = { [weak self] in self?.switchLayout(fromFn: true) }
         refreshMonitoring()
+        for action in ShortcutAction.allCases {
+            guard let shortcut = preferences.shortcut(for: action) else { continue }
+            if !globalShortcuts.set(shortcut, for: action) {
+                preferences.shortcutErrors[action] = "This shortcut is unavailable. Record another combination."
+            }
+        }
+
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(applicationDidActivate(_:)),
+            name: NSWorkspace.didActivateApplicationNotification, object: nil
+        )
 
         if !SetupWindowController.hasCompletedSetup {
             showSetup()
@@ -22,7 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidBecomeActive(_ notification: Notification) {
         refreshMonitoring()
-        refreshStartupToggle()
+        preferences.startupStatus = loginItem.status
         if setupWindow?.window?.isVisible == true {
             setupWindow?.refresh()
         }
@@ -39,18 +62,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         keyboardMonitor.stop()
+        globalShortcuts.stop()
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
+        DistributedNotificationCenter.default().removeObserver(self)
     }
 
     private func configureMenu() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        if let image = NSImage(systemSymbolName: "arrow.left.arrow.right", accessibilityDescription: "Instant Lang Switch") {
-            image.isTemplate = true
-            statusItem.button?.image = image
-        } else {
-            statusItem.button?.title = "⇄"
-        }
-        statusItem.button?.toolTip = "Instant Lang Switch"
-
         let menu = NSMenu()
         menu.delegate = self
         let setupItem = NSMenuItem(title: "Setup…", action: #selector(showSetup), keyEquivalent: "")
@@ -70,6 +88,90 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Instant Lang Switch", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         statusItem.menu = menu
+    }
+
+    private func observeInputSources() {
+        let center = DistributedNotificationCenter.default()
+        for name in [InputSources.selectedChanged, InputSources.enabledChanged] {
+            center.addObserver(self, selector: #selector(inputSourcesDidChange(_:)), name: name, object: nil)
+        }
+        preferences.refreshSources()
+        menuBarPreference = preferences.$configuration
+            .map(\.showActiveLayout)
+            .removeDuplicates()
+            .sink { [weak self] in self?.updateStatusItem(showActiveLayout: $0) }
+    }
+
+    @objc private func inputSourcesDidChange(_ notification: Notification) {
+        preferences.refreshSources()
+        updateStatusItem(showActiveLayout: preferences.configuration.showActiveLayout)
+        if setupWindow?.window?.isVisible == true {
+            setupWindow?.refresh()
+        }
+    }
+
+    private func updateStatusItem(showActiveLayout: Bool) {
+        let current = InputSources.current()
+        statusItem.button?.toolTip = current.map { "Instant Lang Switch · \($0.name)" } ?? "Instant Lang Switch"
+        statusItem.button?.setAccessibilityLabel(statusItem.button?.toolTip)
+        if showActiveLayout, let current {
+            statusItem.length = NSStatusItem.variableLength
+            statusItem.button?.image = nil
+            statusItem.button?.title = current.shortLabel
+        } else {
+            statusItem.length = NSStatusItem.squareLength
+            let image = NSImage(systemSymbolName: "arrow.left.arrow.right", accessibilityDescription: nil)
+            image?.isTemplate = true
+            statusItem.button?.image = image
+            statusItem.button?.title = image == nil ? "⇄" : ""
+        }
+    }
+
+    @objc private func selectLayout(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        InputSources.select(id: id)
+    }
+
+    @objc private func applicationDidActivate(_ notification: Notification) {
+        guard let application = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+              let bundleID = application.bundleIdentifier,
+              bundleID != Bundle.main.bundleIdentifier else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard NSWorkspace.shared.frontmostApplication?.processIdentifier == application.processIdentifier,
+                  let id = self?.preferences.configuration.appRules.first(where: { $0.id == bundleID })?.sourceID else {
+                return
+            }
+            InputSources.select(id: id)
+        }
+    }
+
+    private func switchLayout(fromFn: Bool) {
+        let change = InputSources.selectNext(favorites: preferences.configuration.favorites)
+        guard fromFn else { return }
+        if let change, let previous = change.previousID {
+            setupWindow?.didRequestFnSwitch(from: previous, to: change.selectedID)
+        } else {
+            setupWindow?.didFailFnSwitch()
+        }
+    }
+
+    private func correctSelectedText() {
+        let configuration = preferences.configuration
+        guard let sourceID = configuration.correctionSourceID, let targetID = configuration.correctionTargetID,
+              sourceID != targetID, let source = InputSources.layoutData(for: sourceID),
+              let target = InputSources.layoutData(for: targetID) else {
+            showAlert(
+                "Choose two keyboard layouts",
+                detail: "In Settings → Shortcuts, select two different enabled keyboard layouts for text correction."
+            )
+            return
+        }
+
+        do {
+            try SelectionCorrection.correct(source: source, target: target, application: NSWorkspace.shared.frontmostApplication)
+        } catch {
+            showAlert("Couldn’t correct selected text", detail: error.localizedDescription)
+        }
     }
 
     private func refreshMonitoring(inputMonitoringGranted: Bool = KeyboardMonitor.hasInputMonitoringAccess) {
@@ -105,84 +207,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showSettings() {
+        preferences.refreshSources()
+        preferences.startupStatus = loginItem.status
         if settingsWindow == nil {
             let bundle = Bundle.main
             let appName = bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "Instant Lang Switch"
+            let version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+            let footer = version.map { "\(appName) · Version \($0)" } ?? appName
+            let view = PreferencesView(
+                preferences: preferences, footer: footer,
+                changeStartup: { [weak self] in self?.changeStartup($0) },
+                setShortcut: { [weak self] in self?.setShortcut($0, for: $1) ?? false },
+                setRecording: { [weak self] in self?.globalShortcuts.setRecording($0) }
+            )
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 344, height: 126),
-                styleMask: [.titled, .closable],
-                backing: .buffered,
-                defer: false
+                contentRect: NSRect(x: 0, y: 0, width: 555, height: 410),
+                styleMask: [.titled, .closable], backing: .buffered, defer: false
             )
             window.title = "\(appName) Settings"
             window.isReleasedWhenClosed = false
-
-            let startupLabel = NSTextField(labelWithString: "Open on startup")
-            let approvalLabel = NSTextField(labelWithString: "Approval required in Login Items")
-            approvalLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-            approvalLabel.textColor = .secondaryLabelColor
-
-            let toggle = NSSwitch()
-            toggle.target = self
-            toggle.action = #selector(changeStartup(_:))
-            toggle.setAccessibilityLabel(startupLabel.stringValue)
-
-            let separator = NSBox()
-            separator.boxType = .separator
-
-            var footerText = appName
-            if let version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String {
-                footerText += " · Version \(version)"
-            }
-            let footer = NSTextField(labelWithString: footerText)
-            footer.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-            footer.textColor = .secondaryLabelColor
-
-            if let contentView = window.contentView {
-                for view in [startupLabel, approvalLabel, toggle, separator, footer] {
-                    view.translatesAutoresizingMaskIntoConstraints = false
-                    contentView.addSubview(view)
-                }
-                NSLayoutConstraint.activate([
-                    toggle.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 23),
-                    toggle.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
-                    startupLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
-                    startupLabel.centerYAnchor.constraint(equalTo: toggle.centerYAnchor),
-                    startupLabel.trailingAnchor.constraint(lessThanOrEqualTo: toggle.leadingAnchor, constant: -12),
-                    approvalLabel.leadingAnchor.constraint(equalTo: startupLabel.leadingAnchor),
-                    approvalLabel.topAnchor.constraint(equalTo: startupLabel.bottomAnchor, constant: 5),
-                    separator.leadingAnchor.constraint(equalTo: startupLabel.leadingAnchor),
-                    separator.trailingAnchor.constraint(equalTo: toggle.trailingAnchor),
-                    separator.heightAnchor.constraint(equalToConstant: 1),
-                    separator.bottomAnchor.constraint(equalTo: footer.topAnchor, constant: -12),
-                    footer.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
-                    footer.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -16)
-                ])
-            }
-
+            window.contentView = NSHostingView(rootView: view.frame(width: 555, height: 410))
             window.center()
-            startupToggle = toggle
-            startupApprovalLabel = approvalLabel
             settingsWindow = window
         }
-        refreshStartupToggle()
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
     }
 
-    private func refreshStartupToggle() {
-        guard let startupToggle else { return }
-        let status = loginItem.status
-        let needsApproval = status == .requiresApproval
-        startupToggle.state = status == .enabled || needsApproval ? .on : .off
-        startupToggle.toolTip = needsApproval ? "Approve Instant Lang Switch in Login Items" : nil
-        startupApprovalLabel?.isHidden = !needsApproval
+    private func setShortcut(_ shortcut: Shortcut?, for action: ShortcutAction) -> Bool {
+        guard globalShortcuts.set(shortcut, for: action) else {
+            preferences.shortcutErrors[action] = "This shortcut is unavailable. Record another combination."
+            return false
+        }
+        preferences.shortcutErrors[action] = nil
+        preferences.saveShortcut(shortcut, for: action)
+        return true
     }
 
-    @objc private func changeStartup(_ sender: NSSwitch) {
-        defer { refreshStartupToggle() }
+    private func changeStartup(_ enabled: Bool) {
+        defer { preferences.startupStatus = loginItem.status }
         do {
-            if sender.state == .on {
+            if enabled {
                 try loginItem.register()
                 if loginItem.status == .requiresApproval {
                     showLoginItemApproval()
@@ -191,15 +256,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try loginItem.unregister()
             }
         } catch {
-            if sender.state == .on, loginItem.status == .requiresApproval {
+            if enabled, loginItem.status == .requiresApproval {
                 showLoginItemApproval()
-                return
+            } else {
+                showAlert("Couldn’t change Open on startup", detail: error.localizedDescription)
             }
-            let alert = NSAlert()
-            alert.alertStyle = .warning
-            alert.messageText = "Couldn’t change Open on startup"
-            alert.informativeText = error.localizedDescription
-            alert.runModal()
         }
     }
 
@@ -213,10 +274,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             SMAppService.openSystemSettingsLoginItems()
         }
     }
+
+    private func showAlert(_ message: String, detail: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = message
+        alert.informativeText = detail
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+    }
 }
 
 extension AppDelegate: NSMenuDelegate {
-    func menuWillOpen(_ menu: NSMenu) {
+    func menuNeedsUpdate(_ menu: NSMenu) {
         refreshMonitoring()
+        preferences.refreshSources()
+        layoutMenuItems.forEach { menu.removeItem($0) }
+        let currentID = InputSources.current()?.id
+        layoutMenuItems = preferences.sources.map { source in
+            let item = NSMenuItem(title: source.name, action: #selector(selectLayout(_:)), keyEquivalent: "")
+            item.representedObject = source.id
+            item.state = source.id == currentID ? .on : .off
+            item.target = self
+            return item
+        }
+        if !layoutMenuItems.isEmpty {
+            layoutMenuItems.append(.separator())
+        }
+        for (index, item) in layoutMenuItems.enumerated() {
+            menu.insertItem(item, at: index)
+        }
     }
 }

@@ -23,6 +23,8 @@ final class KeyboardMonitor {
     private static let appleFnUsage: UInt32 = 0x03
     private static let globeUsage: UInt32 = 0x029D
 
+    var onTap: (() -> Void)?
+
     private var manager: IOHIDManager?
     private var fnTap = FnTap()
     private var activeFn: IOHIDElement?
@@ -93,7 +95,7 @@ final class KeyboardMonitor {
         activeFn = isDown ? element : nil
         let modifiers = CGEventSource.flagsState(.combinedSessionState)
         if fnTap.fnChanged(isDown: isDown, hasOtherModifiers: !modifiers.intersection(Self.chordModifiers).isEmpty) {
-            DispatchQueue.main.async { InputSources.selectNext() }
+            DispatchQueue.main.async { [weak self] in self?.onTap?() }
         }
     }
 

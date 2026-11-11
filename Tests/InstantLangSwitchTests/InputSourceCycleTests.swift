@@ -17,4 +17,19 @@ final class InputSourceCycleTests: XCTestCase {
         XCTAssertNil(InputSourceCycle.nextIndex(in: [], current: "US"))
         XCTAssertNil(InputSourceCycle.nextIndex(in: ["US"], current: "US"))
     }
+
+    func testFavoritesCycleInChosenOrderAndSkipUnavailableLayouts() {
+        let available = ["US", "Polish", "Ukrainian"]
+        let favorites = ["Ukrainian", "French", "US"]
+        XCTAssertEqual(InputSourceCycle.nextID(in: available, favorites: favorites, current: "Polish"), "Ukrainian")
+        XCTAssertEqual(InputSourceCycle.nextID(in: available, favorites: favorites, current: "Ukrainian"), "US")
+        XCTAssertEqual(InputSourceCycle.nextID(in: available, favorites: favorites, current: "US"), "Ukrainian")
+        XCTAssertEqual(InputSourceCycle.nextID(in: available, favorites: ["French"], current: "US"), "Polish")
+    }
+
+    func testOneFavoriteCanBeSelectedFromOutsideTheCycle() {
+        let available = ["US", "Polish", "Ukrainian"]
+        XCTAssertEqual(InputSourceCycle.nextID(in: available, favorites: ["US"], current: "Polish"), "US")
+        XCTAssertNil(InputSourceCycle.nextID(in: available, favorites: ["US"], current: "US"))
+    }
 }
