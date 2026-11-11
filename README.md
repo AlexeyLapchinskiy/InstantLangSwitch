@@ -14,6 +14,8 @@ Download and open `InstantLangSwitch.dmg`, drag **Instant Lang Switch** to **App
 
 The release build is ad-hoc signed and unnotarized, so macOS may block it on first launch. You can build a local copy using the instructions below. [Apple’s guide to opening downloaded apps](https://support.apple.com/en-us/102445)
 
+On first launch, the setup window shows the keyboard permission and Globe-key steps below. You can reopen it from **Setup…** in the app’s menu bar menu.
+
 1. In **System Settings → Keyboard**, set **Press 🌐 key to** or **Press fn key to** to **Do Nothing**. This turns off the built-in picker. Under **Text Input → Edit**, make sure at least two input sources are enabled. [Apple Keyboard settings](https://support.apple.com/guide/mac-help/kbdm162/mac)
 2. In **System Settings → Privacy & Security → Input Monitoring**, allow **Instant Lang Switch**. The app’s menu bar icon has an **Enable Input Monitoring…** item that opens this pane. Quit and reopen the app if macOS prompts you. [Apple Input Monitoring settings](https://support.apple.com/guide/mac-help/mchl4cedafb6/mac)
 3. Open a text field, tap and release **Fn / 🌐** by itself, and type to try the new layout.

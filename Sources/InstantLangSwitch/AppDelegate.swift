@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let loginItem = SMAppService.mainApp
     private var statusItem: NSStatusItem!
     private var monitoringMenuItem: NSMenuItem!
+    private var setupWindow: SetupWindowController?
     private var settingsWindow: NSWindow?
     private var startupCheckbox: NSButton?
 
@@ -13,22 +14,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         configureMenu()
         refreshMonitoring()
 
-        if !UserDefaults.standard.bool(forKey: "hasLaunched") {
-            UserDefaults.standard.set(true, forKey: "hasLaunched")
-            showSettings()
-            if !CGPreflightListenEventAccess() {
-                CGRequestListenEventAccess()
-            }
+        if !SetupWindowController.hasCompletedSetup {
+            showSetup()
         }
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
         refreshMonitoring()
         refreshStartupCheckbox()
+        if setupWindow?.window?.isVisible == true {
+            setupWindow?.refresh()
+        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
-        showSettings()
+        if SetupWindowController.hasCompletedSetup {
+            showSettings()
+        } else {
+            showSetup()
+        }
         return false
     }
 
@@ -48,6 +52,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let menu = NSMenu()
         menu.delegate = self
+        let setupItem = NSMenuItem(title: "Setup…", action: #selector(showSetup), keyEquivalent: "")
+        setupItem.target = self
+        menu.addItem(setupItem)
         let settingsItem = NSMenuItem(title: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
         settingsItem.target = self
         menu.addItem(settingsItem)
@@ -78,12 +85,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func enableInputMonitoring() {
-        if !CGPreflightListenEventAccess(), !CGRequestListenEventAccess() {
-            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent") {
-                NSWorkspace.shared.open(url)
-            }
+        if !CGPreflightListenEventAccess() {
+            SetupWindowController.openInputMonitoring()
         }
         refreshMonitoring()
+    }
+
+    @objc private func showSetup() {
+        if setupWindow == nil {
+            setupWindow = SetupWindowController { [weak self] in
+                self?.refreshMonitoring()
+            }
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        setupWindow?.showWindow(nil)
     }
 
     @objc private func showSettings() {
