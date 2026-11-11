@@ -35,6 +35,8 @@ swift test
 
 The build creates `dist/InstantLangSwitch.dmg` and ad-hoc signs the app for local use. Set `CODESIGN_IDENTITY` to use a Developer ID Application certificate. Notarization is a separate distribution step.
 
+Build with Xcode 26 or later to include the layered app icon used by macOS Tahoe and later.
+
 ## How it works
 
 The app uses IOKit to detect a standalone Fn / Globe tap and macOS’s Text Input Source API to select the next layout. Input Monitoring allows it to detect the tap while another app is active. Keyboard events are processed in memory and are never stored or transmitted.
