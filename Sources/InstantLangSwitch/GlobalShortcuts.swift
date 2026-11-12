@@ -51,12 +51,7 @@ struct Shortcut: Codable, Equatable {
     }
 }
 
-enum ShortcutAction: UInt32, CaseIterable {
-    case switchLayout
-    case correctSelection
-}
-
-// Carbon's event handler and registrations are confined to the main event loop.
+// Carbon's event handler and registration are confined to the main event loop.
 final class GlobalShortcuts {
     private struct Registration {
         let id: UInt32
@@ -66,14 +61,14 @@ final class GlobalShortcuts {
 
     private static let signature: OSType = 0x494C5357 // ILSW
     private let logger = Logger(subsystem: "com.alexeylapchinskiy.InstantLangSwitch", category: "Shortcuts")
-    private let onTrigger: (ShortcutAction) -> Void
+    private let onTrigger: () -> Void
     private var handler: EventHandlerRef?
-    private var registrations: [ShortcutAction: Registration] = [:]
-    private var shortcuts: [ShortcutAction: Shortcut] = [:]
+    private var registration: Registration?
+    private var shortcut: Shortcut?
     private var nextID: UInt32 = 0
     private var isRecording = false
 
-    init(onTrigger: @escaping (ShortcutAction) -> Void) {
+    init(onTrigger: @escaping () -> Void) {
         self.onTrigger = onTrigger
     }
 
@@ -82,26 +77,23 @@ final class GlobalShortcuts {
     }
 
     @discardableResult
-    func set(_ shortcut: Shortcut?, for action: ShortcutAction) -> Bool {
+    func set(_ shortcut: Shortcut?) -> Bool {
         guard let shortcut else {
-            unregister(action)
-            shortcuts[action] = nil
+            unregister()
+            self.shortcut = nil
             return true
         }
 
         guard shortcut.isValid, !isRecording else { return false }
-        if let current = registrations[action], shortcut.matches(current.shortcut) {
-            shortcuts[action] = shortcut
+        if let registration, shortcut.matches(registration.shortcut) {
+            self.shortcut = shortcut
             return true
         }
 
-        guard !shortcuts.contains(where: { $0.key != action && shortcut.matches($0.value) }),
-              let registration = register(shortcut) else {
-            return false
-        }
-        unregister(action)
-        registrations[action] = registration
-        shortcuts[action] = shortcut
+        guard let replacement = register(shortcut) else { return false }
+        unregister()
+        registration = replacement
+        self.shortcut = shortcut
         return true
     }
 
@@ -109,25 +101,18 @@ final class GlobalShortcuts {
         guard self.isRecording != isRecording else { return }
         self.isRecording = isRecording
         if isRecording {
-            for action in ShortcutAction.allCases {
-                unregister(action)
-            }
-        } else {
-            for action in ShortcutAction.allCases {
-                guard let shortcut = shortcuts[action] else { continue }
-                registrations[action] = register(shortcut)
-                if registrations[action] == nil {
-                    logger.error("Could not restore the shortcut for action \(action.rawValue).")
-                }
+            unregister()
+        } else if let shortcut {
+            registration = register(shortcut)
+            if registration == nil {
+                logger.error("Could not restore the layout switch shortcut.")
             }
         }
     }
 
     func stop() {
-        for action in ShortcutAction.allCases {
-            unregister(action)
-        }
-        shortcuts.removeAll()
+        unregister()
+        shortcut = nil
         if let handler {
             RemoveEventHandler(handler)
             self.handler = nil
@@ -135,9 +120,10 @@ final class GlobalShortcuts {
         isRecording = false
     }
 
-    private func unregister(_ action: ShortcutAction) {
-        if let registration = registrations.removeValue(forKey: action) {
+    private func unregister() {
+        if let registration {
             UnregisterEventHotKey(registration.ref)
+            self.registration = nil
         }
     }
 
@@ -183,11 +169,10 @@ final class GlobalShortcuts {
             event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
             nil, MemoryLayout<EventHotKeyID>.size, nil, &id
         )
-        guard status == noErr, id.signature == Self.signature,
-              let action = registrations.first(where: { $0.value.id == id.id })?.key else {
+        guard status == noErr, id.signature == Self.signature, registration?.id == id.id else {
             return OSStatus(eventNotHandledErr)
         }
-        onTrigger(action)
+        onTrigger()
         return noErr
     }
 }

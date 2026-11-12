@@ -7,11 +7,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let keyboardMonitor = KeyboardMonitor()
     private let loginItem = SMAppService.mainApp
     private let preferences = Preferences()
-    private lazy var globalShortcuts = GlobalShortcuts { [weak self] action in
-        switch action {
-        case .switchLayout: self?.switchLayout(fromFn: false)
-        case .correctSelection: self?.correctSelectedText()
-        }
+    private lazy var globalShortcuts = GlobalShortcuts { [weak self] in
+        self?.switchLayout(fromFn: false)
     }
 
     private var statusItem: NSStatusItem!
@@ -26,11 +23,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         observeInputSources()
         keyboardMonitor.onTap = { [weak self] in self?.switchLayout(fromFn: true) }
         refreshMonitoring()
-        for action in ShortcutAction.allCases {
-            guard let shortcut = preferences.shortcut(for: action) else { continue }
-            if !globalShortcuts.set(shortcut, for: action) {
-                preferences.shortcutErrors[action] = "This shortcut is unavailable. Record another combination."
-            }
+        if let shortcut = preferences.layoutShortcut {
+            setShortcut(shortcut)
         }
 
         NSWorkspace.shared.notificationCenter.addObserver(
@@ -154,32 +148,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func correctSelectedText() {
-        preferences.refreshSources()
-        guard let pair = preferences.correctionPair,
-              let first = InputSources.layoutData(for: pair.first.id),
-              let second = InputSources.layoutData(for: pair.second.id) else {
-            showAlert("Text correction needs two layouts", detail: SelectionCorrection.pairRequirement)
-            return
-        }
-
-        let activeID = InputSources.current()?.id
-        let preferredDestination: SelectionCorrection.Destination?
-        switch activeID {
-        case pair.first.id: preferredDestination = .first
-        case pair.second.id: preferredDestination = .second
-        default: preferredDestination = nil
-        }
-        do {
-            try SelectionCorrection.correct(
-                first: first, second: second, preferredDestination: preferredDestination,
-                application: NSWorkspace.shared.frontmostApplication
-            )
-        } catch {
-            showAlert("Couldn’t correct selected text", detail: error.localizedDescription)
-        }
-    }
-
     private func refreshMonitoring(inputMonitoringGranted: Bool = KeyboardMonitor.hasInputMonitoringAccess) {
         guard let monitoringMenuItem else { return }
         if inputMonitoringGranted {
@@ -224,7 +192,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 preferences: preferences, footer: footer,
                 openSetup: { [weak self] in self?.showSetup() },
                 changeStartup: { [weak self] in self?.changeStartup($0) },
-                setShortcut: { [weak self] in self?.setShortcut($0, for: $1) ?? false },
+                setShortcut: { [weak self] in self?.setShortcut($0) ?? false },
                 setRecording: { [weak self] in self?.globalShortcuts.setRecording($0) }
             )
             let window = NSWindow(
@@ -241,13 +209,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow?.makeKeyAndOrderFront(nil)
     }
 
-    private func setShortcut(_ shortcut: Shortcut?, for action: ShortcutAction) -> Bool {
-        guard globalShortcuts.set(shortcut, for: action) else {
-            preferences.shortcutErrors[action] = "This shortcut is unavailable. Record another combination."
+    @discardableResult
+    private func setShortcut(_ shortcut: Shortcut?) -> Bool {
+        guard globalShortcuts.set(shortcut) else {
+            preferences.layoutShortcutError = "This shortcut is unavailable. Record another combination."
             return false
         }
-        preferences.shortcutErrors[action] = nil
-        preferences.saveShortcut(shortcut, for: action)
+        preferences.layoutShortcutError = nil
+        if preferences.layoutShortcut != shortcut {
+            preferences.layoutShortcut = shortcut
+        }
         return true
     }
 

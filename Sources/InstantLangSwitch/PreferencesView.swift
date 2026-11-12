@@ -8,7 +8,7 @@ struct PreferencesView: View {
     let footer: String
     let openSetup: () -> Void
     let changeStartup: (Bool) -> Void
-    let setShortcut: (Shortcut?, ShortcutAction) -> Bool
+    let setShortcut: (Shortcut?) -> Bool
     let setRecording: (Bool) -> Void
 
     var body: some View {
@@ -99,20 +99,7 @@ struct PreferencesView: View {
     private var shortcuts: some View {
         Form {
             Section("Global shortcuts") {
-                shortcutRow("Additional layout switch", action: .switchLayout)
-                shortcutRow("Correct selected text", action: .correctSelection)
-            }
-            Section("Text correction") {
-                if let pair = preferences.correctionPair {
-                    LabeledContent("Layouts", value: "\(pair.first.name) ↔ \(pair.second.name)")
-                    Text("Select text in an editable field and press the correction shortcut. If the direction is unclear, switch to the layout you want to convert to first.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text(SelectionCorrection.pairRequirement)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
+                shortcutRow("Additional layout switch")
             }
         }
         .formStyle(.grouped)
@@ -164,23 +151,23 @@ struct PreferencesView: View {
         }
     }
 
-    private func shortcutRow(_ label: String, action: ShortcutAction) -> some View {
+    private func shortcutRow(_ label: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(label)
                 Spacer()
                 ShortcutRecorderView(
                     label: label,
-                    shortcut: preferences.shortcut(for: action),
-                    onRecord: { setShortcut($0, action) },
+                    shortcut: preferences.layoutShortcut,
+                    onRecord: { setShortcut($0) },
                     onRecordingChanged: setRecording
                 )
                 .frame(width: 128)
-                Button("Clear") { _ = setShortcut(nil, action) }
-                    .disabled(preferences.shortcut(for: action) == nil)
+                Button("Clear") { _ = setShortcut(nil) }
+                    .disabled(preferences.layoutShortcut == nil)
                     .accessibilityLabel("Clear \(label) shortcut")
             }
-            if let error = preferences.shortcutErrors[action] {
+            if let error = preferences.layoutShortcutError {
                 Text(error).font(.footnote).foregroundStyle(.red)
             }
         }

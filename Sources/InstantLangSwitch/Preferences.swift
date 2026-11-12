@@ -18,34 +18,37 @@ struct PreferencesConfiguration: Codable {
 final class Preferences: ObservableObject {
     private let defaults: UserDefaults
     private static let key = "switchingPreferences"
+    private static let layoutShortcutKey = "0"
 
     @Published var configuration: PreferencesConfiguration {
-        didSet {
-            if let data = try? PropertyListEncoder().encode(configuration) {
-                defaults.set(data, forKey: Self.key)
-            }
-        }
+        didSet { persistConfiguration() }
     }
     @Published var sources: [InputSource] = []
     @Published var startupStatus: SMAppService.Status = .notRegistered
-    @Published var shortcutErrors: [ShortcutAction: String] = [:]
+    @Published var layoutShortcutError: String?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         if let data = defaults.data(forKey: Self.key),
-           let saved = try? PropertyListDecoder().decode(PreferencesConfiguration.self, from: data) {
+           var saved = try? PropertyListDecoder().decode(PreferencesConfiguration.self, from: data) {
+            // Earlier versions stored the second shortcut under key "1".
+            let removedShortcut = saved.shortcuts.removeValue(forKey: "1")
             configuration = saved
+            if removedShortcut != nil { persistConfiguration() }
         } else {
             configuration = PreferencesConfiguration()
         }
     }
 
-    func shortcut(for action: ShortcutAction) -> Shortcut? {
-        configuration.shortcuts[String(action.rawValue)]
+    var layoutShortcut: Shortcut? {
+        get { configuration.shortcuts[Self.layoutShortcutKey] }
+        set { configuration.shortcuts[Self.layoutShortcutKey] = newValue }
     }
 
-    func saveShortcut(_ shortcut: Shortcut?, for action: ShortcutAction) {
-        configuration.shortcuts[String(action.rawValue)] = shortcut
+    private func persistConfiguration() {
+        if let data = try? PropertyListEncoder().encode(configuration) {
+            defaults.set(data, forKey: Self.key)
+        }
     }
 
     func refreshSources() {
@@ -53,9 +56,5 @@ final class Preferences: ObservableObject {
         if sources != available {
             sources = available
         }
-    }
-
-    var correctionPair: (first: InputSource, second: InputSource)? {
-        SelectionCorrection.layoutPair(in: sources, favorites: configuration.favorites)
     }
 }

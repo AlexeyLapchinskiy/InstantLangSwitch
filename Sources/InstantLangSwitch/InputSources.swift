@@ -6,7 +6,6 @@ struct InputSource: Identifiable, Equatable {
     let id: String
     let name: String
     let shortLabel: String
-    var supportsTextCorrection = false
 }
 
 enum InputSourceCycle {
@@ -54,12 +53,6 @@ enum InputSources {
         return current()?.id == id || select(source.raw)
     }
 
-    static func layoutData(for id: String) -> Data? {
-        guard let source = selectable().first(where: { $0.info.id == id }),
-              let data = TISGetInputSourceProperty(source.raw, kTISPropertyUnicodeKeyLayoutData) else { return nil }
-        return Unmanaged<CFData>.fromOpaque(data).takeUnretainedValue() as Data
-    }
-
     private static func select(_ source: TISInputSource) -> Bool {
         let status = TISSelectInputSource(source)
         if status != noErr {
@@ -95,7 +88,6 @@ private extension TISInputSource {
         } as? [String]
         let code = languages?.first?.split(separator: "-").first
         let label = code.map { String($0).uppercased() } ?? String(name.prefix(3))
-        let supportsTextCorrection = TISGetInputSourceProperty(self, kTISPropertyUnicodeKeyLayoutData) != nil
-        return InputSource(id: id, name: name, shortLabel: label, supportsTextCorrection: supportsTextCorrection)
+        return InputSource(id: id, name: name, shortLabel: label)
     }
 }
