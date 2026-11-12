@@ -13,8 +13,6 @@ struct PreferencesConfiguration: Codable {
     var showActiveLayout = false
     var appRules: [AppLayoutRule] = []
     var shortcuts: [String: Shortcut] = [:]
-    var correctionSourceID: String?
-    var correctionTargetID: String?
 }
 
 final class Preferences: ObservableObject {
@@ -55,5 +53,9 @@ final class Preferences: ObservableObject {
         if sources != available {
             sources = available
         }
+    }
+
+    var correctionPair: (first: InputSource, second: InputSource)? {
+        SelectionCorrection.layoutPair(in: sources, favorites: configuration.favorites)
     }
 }

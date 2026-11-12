@@ -3,12 +3,17 @@ import ApplicationServices
 import Carbon
 
 enum SelectionCorrection {
+    enum Destination {
+        case first, second
+    }
+
     private enum Failure: LocalizedError {
         case accessibilityRequired
         case secureInput
         case unsupportedField
         case noSelection
         case incompatibleLayouts
+        case ambiguousDirection
         case unchanged
         case selectionChanged
         case couldNotReplace
@@ -25,6 +30,8 @@ enum SelectionCorrection {
                 return "Select the text you want to correct first."
             case .incompatibleLayouts:
                 return "Choose two keyboard layouts that support physical-key conversion."
+            case .ambiguousDirection:
+                return "Switch to the layout you want to convert to, then try again."
             case .unchanged:
                 return "The selection has no characters that can be converted between these layouts."
             case .selectionChanged:
@@ -36,8 +43,19 @@ enum SelectionCorrection {
     }
 
     private static let messagingTimeout: Float = 0.3
+    static let pairRequirement = "Enable exactly two keyboard layouts in macOS or select two enabled favorites in Layouts. Both must support text correction."
 
-    static func correct(source: Data, target: Data, application: NSRunningApplication?) throws {
+    static func layoutPair(in sources: [InputSource], favorites: [String]) -> (first: InputSource, second: InputSource)? {
+        let favorites = Set(favorites)
+        let selected = sources.filter { favorites.contains($0.id) }
+        let pair = selected.count == 2 ? selected : sources
+        guard pair.count == 2, pair.allSatisfy(\.supportsTextCorrection) else { return nil }
+        return (pair[0], pair[1])
+    }
+
+    static func correct(
+        first: Data, second: Data, preferredDestination: Destination?, application: NSRunningApplication?
+    ) throws {
         guard !IsSecureEventInputEnabled() else { throw Failure.secureInput }
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         guard AXIsProcessTrustedWithOptions(options) else { throw Failure.accessibilityRequired }
@@ -61,7 +79,7 @@ enum SelectionCorrection {
             throw Failure.noSelection
         }
         let range = attribute(kAXSelectedTextRangeAttribute, of: field)
-        let corrected = try convert(selection, source: source, target: target)
+        let corrected = try convert(selection, first: first, second: second, preferredDestination: preferredDestination)
         guard corrected != selection else { throw Failure.unchanged }
 
         guard !IsSecureEventInputEnabled() else { throw Failure.secureInput }
@@ -82,29 +100,53 @@ enum SelectionCorrection {
         }
     }
 
-    static func convert(_ text: String, source: Data, target: Data) throws -> String {
+    static func convert(_ text: String, first: Data, second: Data, preferredDestination: Destination? = nil) throws -> String {
         let keyboardType = UInt32(LMGetKbdType())
         let modifiers: [UInt32] = [0, UInt32(shiftKey >> 8)]
-        guard source.count >= MemoryLayout<UCKeyboardLayout>.size,
-              target.count >= MemoryLayout<UCKeyboardLayout>.size else { throw Failure.incompatibleLayouts }
+        guard first.count >= MemoryLayout<UCKeyboardLayout>.size,
+              second.count >= MemoryLayout<UCKeyboardLayout>.size else { throw Failure.incompatibleLayouts }
 
-        let candidates: [(Character, Character?)] = source.withUnsafeBytes { sourceBytes in
-            target.withUnsafeBytes { targetBytes in
-                let sourceLayout = sourceBytes.baseAddress!.assumingMemoryBound(to: UCKeyboardLayout.self)
-                let targetLayout = targetBytes.baseAddress!.assumingMemoryBound(to: UCKeyboardLayout.self)
-                var candidates: [(Character, Character?)] = []
+        let maps = first.withUnsafeBytes { firstBytes in
+            second.withUnsafeBytes { secondBytes in
+                let firstLayout = firstBytes.baseAddress!.assumingMemoryBound(to: UCKeyboardLayout.self)
+                let secondLayout = secondBytes.baseAddress!.assumingMemoryBound(to: UCKeyboardLayout.self)
+                var firstToSecond: [(Character, Character?)] = []
+                var secondToFirst: [(Character, Character?)] = []
                 for modifier in modifiers {
                     for key in UInt16(0)...127 {
-                        guard let character = translate(key, modifier: modifier, keyboardType: keyboardType, layout: sourceLayout)
-                        else { continue }
-                        let replacement = translate(key, modifier: modifier, keyboardType: keyboardType, layout: targetLayout)
-                        candidates.append((character, replacement))
+                        let a = translate(key, modifier: modifier, keyboardType: keyboardType, layout: firstLayout)
+                        let b = translate(key, modifier: modifier, keyboardType: keyboardType, layout: secondLayout)
+                        if let a { firstToSecond.append((a, b)) }
+                        if let b { secondToFirst.append((b, a)) }
                     }
                 }
-                return candidates
+                return (forward: characterMap(from: firstToSecond), reverse: characterMap(from: secondToFirst))
             }
         }
-        let mapping = characterMap(from: candidates)
+
+        // Letters shared by both layouts and punctuation cannot reliably identify the source layout.
+        var evidence = 0
+        for character in text where character.isLetter {
+            switch (maps.forward[character], maps.reverse[character]) {
+            case (.some, .none): evidence += 1
+            case (.none, .some): evidence -= 1
+            default: break
+            }
+        }
+        let destination: Destination
+        if evidence > 0 {
+            destination = .second
+        } else if evidence < 0 {
+            destination = .first
+        } else if let preferredDestination {
+            destination = preferredDestination
+        } else {
+            let forward = String(text.map { maps.forward[$0] ?? $0 })
+            let reverse = String(text.map { maps.reverse[$0] ?? $0 })
+            guard forward == reverse else { throw Failure.ambiguousDirection }
+            return forward
+        }
+        let mapping = destination == .second ? maps.forward : maps.reverse
         guard !mapping.isEmpty else { throw Failure.incompatibleLayouts }
         return String(text.map { mapping[$0] ?? $0 })
     }

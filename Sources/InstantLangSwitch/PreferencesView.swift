@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 struct PreferencesView: View {
     @ObservedObject var preferences: Preferences
     let footer: String
+    let openSetup: () -> Void
     let changeStartup: (Bool) -> Void
     let setShortcut: (Shortcut?, ShortcutAction) -> Bool
     let setRecording: (Bool) -> Void
@@ -18,6 +19,7 @@ struct PreferencesView: View {
                 appRules.tabItem { Label("App Rules", systemImage: "square.grid.2x2") }
                 shortcuts.tabItem { Label("Shortcuts", systemImage: "command") }
             }
+            .padding(.top, 12)
             Divider()
             Text(footer)
                 .font(.footnote)
@@ -36,6 +38,7 @@ struct PreferencesView: View {
                 Button("Approve in Login Items…") { SMAppService.openSystemSettingsLoginItems() }
             }
             Toggle("Show active layout in the menu bar", isOn: $preferences.configuration.showActiveLayout)
+            Button("Open setup", action: openSetup)
         }
         .formStyle(.grouped)
         .toggleStyle(.switch)
@@ -61,7 +64,7 @@ struct PreferencesView: View {
                 if preferences.sources.isEmpty {
                     Text("Add input sources in Keyboard settings.").foregroundStyle(.secondary)
                 }
-                Text("Fn follows the order above. With no available favorites, Fn cycles through all enabled layouts.")
+                Text("Fn follows the order above. If you haven’t selected any favorites, Fn cycles through all enabled layouts.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -96,22 +99,20 @@ struct PreferencesView: View {
     private var shortcuts: some View {
         Form {
             Section("Global shortcuts") {
-                shortcutRow("Switch layout", action: .switchLayout)
+                shortcutRow("Additional layout switch", action: .switchLayout)
                 shortcutRow("Correct selected text", action: .correctSelection)
             }
             Section("Text correction") {
-                let layouts = preferences.sources.filter(\.supportsTextCorrection)
-                sourcePicker(
-                    "Typed with", selection: $preferences.configuration.correctionSourceID,
-                    none: "Choose a layout", sources: layouts
-                )
-                sourcePicker(
-                    "Convert to", selection: $preferences.configuration.correctionTargetID,
-                    none: "Choose a layout", sources: layouts
-                )
-                Text("Select text in an editable field and run the correction shortcut. The first use asks for Accessibility access.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                if let pair = preferences.correctionPair {
+                    LabeledContent("Layouts", value: "\(pair.first.name) ↔ \(pair.second.name)")
+                    Text("Select text in an editable field and press the correction shortcut. If the direction is unclear, switch to the layout you want to convert to first.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text(SelectionCorrection.pairRequirement)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .formStyle(.grouped)
@@ -150,10 +151,8 @@ struct PreferencesView: View {
         .disabled(!favorites.indices.contains(target))
     }
 
-    private func sourcePicker(
-        _ label: String, selection: Binding<String?>, none: String, sources: [InputSource]? = nil
-    ) -> some View {
-        let available = sources ?? preferences.sources
+    private func sourcePicker(_ label: String, selection: Binding<String?>, none: String) -> some View {
+        let available = preferences.sources
         return Picker(label, selection: selection) {
             Text(none).tag(nil as String?)
             if let id = selection.wrappedValue, !available.contains(where: { $0.id == id }) {

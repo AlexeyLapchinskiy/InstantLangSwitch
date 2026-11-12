@@ -147,28 +147,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func switchLayout(fromFn: Bool) {
         let change = InputSources.selectNext(favorites: preferences.configuration.favorites)
-        guard fromFn else { return }
-        if let change, let previous = change.previousID {
-            setupWindow?.didRequestFnSwitch(from: previous, to: change.selectedID)
-        } else {
-            setupWindow?.didFailFnSwitch()
+        guard fromFn, let change, let previous = change.previousID else { return }
+        setupWindow?.didRequestFnSwitch(from: previous, to: change.selectedID)
+        if setupWindow?.window?.isVisible == true {
+            setupWindow?.refresh()
         }
     }
 
     private func correctSelectedText() {
-        let configuration = preferences.configuration
-        guard let sourceID = configuration.correctionSourceID, let targetID = configuration.correctionTargetID,
-              sourceID != targetID, let source = InputSources.layoutData(for: sourceID),
-              let target = InputSources.layoutData(for: targetID) else {
-            showAlert(
-                "Choose two keyboard layouts",
-                detail: "In Settings → Shortcuts, select two different enabled keyboard layouts for text correction."
-            )
+        preferences.refreshSources()
+        guard let pair = preferences.correctionPair,
+              let first = InputSources.layoutData(for: pair.first.id),
+              let second = InputSources.layoutData(for: pair.second.id) else {
+            showAlert("Text correction needs two layouts", detail: SelectionCorrection.pairRequirement)
             return
         }
 
+        let activeID = InputSources.current()?.id
+        let preferredDestination: SelectionCorrection.Destination?
+        switch activeID {
+        case pair.first.id: preferredDestination = .first
+        case pair.second.id: preferredDestination = .second
+        default: preferredDestination = nil
+        }
         do {
-            try SelectionCorrection.correct(source: source, target: target, application: NSWorkspace.shared.frontmostApplication)
+            try SelectionCorrection.correct(
+                first: first, second: second, preferredDestination: preferredDestination,
+                application: NSWorkspace.shared.frontmostApplication
+            )
         } catch {
             showAlert("Couldn’t correct selected text", detail: error.localizedDescription)
         }
@@ -216,6 +222,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let footer = version.map { "\(appName) · Version \($0)" } ?? appName
             let view = PreferencesView(
                 preferences: preferences, footer: footer,
+                openSetup: { [weak self] in self?.showSetup() },
                 changeStartup: { [weak self] in self?.changeStartup($0) },
                 setShortcut: { [weak self] in self?.setShortcut($0, for: $1) ?? false },
                 setRecording: { [weak self] in self?.globalShortcuts.setRecording($0) }
@@ -224,7 +231,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 contentRect: NSRect(x: 0, y: 0, width: 555, height: 410),
                 styleMask: [.titled, .closable], backing: .buffered, defer: false
             )
-            window.title = "\(appName) Settings"
+            window.title = "Settings"
             window.isReleasedWhenClosed = false
             window.contentView = NSHostingView(rootView: view.frame(width: 555, height: 410))
             window.center()

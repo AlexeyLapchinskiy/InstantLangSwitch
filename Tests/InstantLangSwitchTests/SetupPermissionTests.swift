@@ -27,7 +27,7 @@ final class SetupPermissionTests: XCTestCase {
         }
     }
 
-    func testOpensSettingsOnlyAfterTenSecondsOfVisibleCompletedSetup() async throws {
+    func testFinishSetupRequiresBothChecksAndAButtonClick() async throws {
         try await MainActor.run {
             _ = NSApplication.shared
             let suite = "SetupPermissionTests.\(UUID().uuidString)"
@@ -40,64 +40,57 @@ final class SetupPermissionTests: XCTestCase {
             window.orderBack(nil)
             defer { setup.close() }
 
+            let finish = try XCTUnwrap(window.contentView?.subviews.compactMap { $0 as? NSButton }
+                .first { $0.title == "Finish setup" })
+            setup.refresh(inputMonitoringGranted: false, globeKeyAction: 0)
+            XCTAssertTrue(finish.isHidden)
+            setup.refresh(inputMonitoringGranted: true, globeKeyAction: 1)
+            XCTAssertTrue(finish.isHidden)
             setup.refresh(inputMonitoringGranted: true, globeKeyAction: 0, uptime: 100)
-            setup.refresh(inputMonitoringGranted: false, globeKeyAction: 0, uptime: 109)
-            setup.refresh(inputMonitoringGranted: true, globeKeyAction: 0, uptime: 110)
-            setup.refresh(inputMonitoringGranted: true, globeKeyAction: 0, uptime: 119)
-            XCTAssertEqual(settingsOpened, 0)
-
-            setup.close()
-            setup.refresh(inputMonitoringGranted: true, globeKeyAction: 0, uptime: 120)
-            XCTAssertEqual(settingsOpened, 0)
-
-            window.orderBack(nil)
-            setup.refresh(inputMonitoringGranted: true, globeKeyAction: 0, uptime: 121)
-            setup.refresh(inputMonitoringGranted: true, globeKeyAction: 0, uptime: 130.99)
+            XCTAssertFalse(finish.isHidden)
+            setup.refresh(inputMonitoringGranted: true, globeKeyAction: 0, uptime: 200)
             XCTAssertTrue(window.isVisible)
+            XCTAssertFalse(defaults.bool(forKey: "initialSetupCompleted"))
             XCTAssertEqual(settingsOpened, 0)
 
-            setup.refresh(inputMonitoringGranted: true, globeKeyAction: 0, uptime: 131)
+            finish.performClick(nil)
             XCTAssertFalse(window.isVisible)
+            XCTAssertTrue(defaults.bool(forKey: "initialSetupCompleted"))
             XCTAssertEqual(settingsOpened, 1)
         }
     }
 
-    func testFnSwitchTestWaitsForTheRequestedLayoutAndPausesTheCountdown() async throws {
+    func testFnSwitchTestAutomaticallyWaitsForTheRequestedLayout() async throws {
         try await MainActor.run {
             _ = NSApplication.shared
             let suite = "SetupPermissionTests.\(UUID().uuidString)"
             let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
             defer { defaults.removePersistentDomain(forName: suite) }
 
-            var settingsOpened = 0
-            let setup = SetupWindowController(defaults: defaults, openSettings: { settingsOpened += 1 }) { _ in }
+            let setup = SetupWindowController(defaults: defaults, openSettings: {}) { _ in }
             let window = try XCTUnwrap(setup.window)
             window.orderBack(nil)
             defer { setup.close() }
 
             let grid = try XCTUnwrap(window.contentView?.subviews.first as? NSGridView)
-            let testControls = try XCTUnwrap(grid.cell(atColumnIndex: 1, rowIndex: 2).contentView)
-            let start = try XCTUnwrap(testControls.subviews.compactMap { $0 as? NSButton }.first)
-            let passed = try XCTUnwrap(testControls.subviews.compactMap { $0 as? NSTextField }.first)
+            let status = try XCTUnwrap(grid.cell(atColumnIndex: 1, rowIndex: 2).contentView as? NSTextField)
             let english = InputSource(id: "en", name: "English", shortLabel: "EN")
             let ukrainian = InputSource(id: "uk", name: "Ukrainian", shortLabel: "UK")
 
             setup.refresh(inputMonitoringGranted: true, globeKeyAction: 0, uptime: 100, currentInputSource: english)
-            XCTAssertTrue(start.isEnabled)
-            start.performClick(nil)
+            XCTAssertEqual(status.stringValue, "Not Tested")
+            XCTAssertEqual(status.textColor, .systemRed)
             setup.refresh(inputMonitoringGranted: true, globeKeyAction: 0, uptime: 110, currentInputSource: ukrainian)
-            XCTAssertTrue(passed.isHidden, "A layout change outside the Fn test must not count.")
-            XCTAssertEqual(settingsOpened, 0)
+            XCTAssertEqual(status.stringValue, "Not Tested", "A change from another shortcut must not count.")
 
             setup.didRequestFnSwitch(from: ukrainian.id, to: english.id, uptime: 111)
             setup.refresh(inputMonitoringGranted: true, globeKeyAction: 0, uptime: 112, currentInputSource: ukrainian)
-            XCTAssertTrue(passed.isHidden, "A requested change must be observed before the test passes.")
+            XCTAssertEqual(status.stringValue, "Not Tested", "The requested layout has not been selected yet.")
             setup.refresh(inputMonitoringGranted: true, globeKeyAction: 0, uptime: 113, currentInputSource: english)
-            XCTAssertFalse(passed.isHidden)
-            setup.refresh(inputMonitoringGranted: true, globeKeyAction: 0, uptime: 122, currentInputSource: english)
-            XCTAssertEqual(settingsOpened, 0)
-            setup.refresh(inputMonitoringGranted: true, globeKeyAction: 0, uptime: 123, currentInputSource: english)
-            XCTAssertEqual(settingsOpened, 1)
+            XCTAssertEqual(status.stringValue, "Tested")
+            XCTAssertEqual(status.textColor, .systemGreen)
+            setup.refresh(inputMonitoringGranted: true, globeKeyAction: 0, uptime: 130, currentInputSource: english)
+            XCTAssertTrue(window.isVisible)
         }
     }
 }

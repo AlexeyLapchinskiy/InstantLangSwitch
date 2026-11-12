@@ -1,21 +1,6 @@
 import AppKit
 
 final class SetupWindowController: NSWindowController, NSWindowDelegate {
-    private enum FnSwitchTest {
-        case idle
-        case waitingForFn
-        case waitingForSelection(expectedID: String, deadline: TimeInterval)
-        case retry
-        case passed
-
-        var isRunning: Bool {
-            switch self {
-            case .waitingForFn, .waitingForSelection, .retry: return true
-            case .idle, .passed: return false
-            }
-        }
-    }
-
     private static let setupCompletedKey = "initialSetupCompleted"
     private static let keyboardOpenedAtKey = "setupKeyboardPreferencesOpenedAt"
     private static let inputMonitoringURL = URL(
@@ -29,17 +14,16 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private let keyboardButton = NSButton(title: "Open Keyboard Preferences", target: nil, action: nil)
     private let grantedLabel = NSTextField(labelWithString: "Granted")
     private let doneLabel = NSTextField(labelWithString: "Done")
-    private let testButton = NSButton(title: "Start Test", target: nil, action: nil)
-    private let testPassedLabel = NSTextField(labelWithString: "Passed")
-    private let testDetailLabel = NSTextField(labelWithString: "")
+    private let finishButton = NSButton(title: "Finish setup", target: nil, action: nil)
+    private let testStatus = NSTextField(labelWithString: "Not Tested")
     private let currentLayoutLabel = NSTextField(labelWithString: "")
     private let defaults: UserDefaults
     private let openSettings: () -> Void
     private let inputMonitoringChanged: (Bool) -> Void
     private var lastInputMonitoringStatus: Bool?
     private var refreshTimer: Timer?
-    private var completedAt: TimeInterval?
-    private var fnSwitchTest = FnSwitchTest.idle
+    private var pendingFnSwitch: (expectedID: String, deadline: TimeInterval)?
+    private var fnSwitchTested = false
 
     static var hasCompletedSetup: Bool {
         UserDefaults.standard.bool(forKey: setupCompletedKey)
@@ -54,7 +38,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         self.openSettings = openSettings
         self.inputMonitoringChanged = inputMonitoringChanged
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 580, height: 230),
+            contentRect: NSRect(x: 0, y: 0, width: 580, height: 265),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -86,8 +70,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         refreshTimer?.invalidate()
         refreshTimer = nil
-        completedAt = nil
-        fnSwitchTest = .idle
+        pendingFnSwitch = nil
+        fnSwitchTested = false
     }
 
     func refresh(
@@ -112,39 +96,19 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             lastInputMonitoringStatus = progress.inputMonitoringGranted
             inputMonitoringChanged(progress.inputMonitoringGranted)
         }
-        if progress.isComplete, !defaults.bool(forKey: Self.setupCompletedKey) {
-            defaults.set(true, forKey: Self.setupCompletedKey)
-        }
+        finishButton.isHidden = !progress.isComplete
         currentLayoutLabel.stringValue = currentInputSource.map { "Current layout · \($0.name)" }
             ?? "No current layout reported."
-        if !progress.isComplete {
-            fnSwitchTest = .idle
-        } else if case let .waitingForSelection(expectedID, deadline) = fnSwitchTest {
-            if uptime > deadline {
-                fnSwitchTest = .retry
-            } else if currentInputSource?.id == expectedID {
-                fnSwitchTest = .passed
+        if let pendingFnSwitch {
+            if uptime > pendingFnSwitch.deadline {
+                self.pendingFnSwitch = nil
+            } else if currentInputSource?.id == pendingFnSwitch.expectedID {
+                self.pendingFnSwitch = nil
+                fnSwitchTested = true
             }
         }
-        updateFnTestControls(ready: progress.isComplete)
-
-        guard progress.isComplete, window?.isVisible == true, !fnSwitchTest.isRunning else {
-            completedAt = nil
-            return
-        }
-
-        let completedAt = self.completedAt ?? uptime
-        self.completedAt = completedAt
-        let remaining = 10 - (uptime - completedAt)
-        if remaining <= 0 {
-            close()
-            openSettings()
-        } else if let refreshTimer {
-            let deadline = Date(timeIntervalSinceNow: remaining)
-            if deadline < refreshTimer.fireDate {
-                refreshTimer.fireDate = deadline
-            }
-        }
+        testStatus.stringValue = fnSwitchTested ? "Tested" : "Not Tested"
+        testStatus.textColor = fnSwitchTested ? .systemGreen : .systemRed
     }
 
     func didRequestFnSwitch(
@@ -152,43 +116,15 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         to expectedID: String,
         uptime: TimeInterval = ProcessInfo.processInfo.systemUptime
     ) {
-        guard window?.isVisible == true, fnSwitchTest.isRunning, previousID != expectedID else { return }
-        fnSwitchTest = .waitingForSelection(expectedID: expectedID, deadline: uptime + 3)
-        updateFnTestControls(ready: true)
+        guard window?.isVisible == true, !fnSwitchTested, previousID != expectedID else { return }
+        pendingFnSwitch = (expectedID, uptime + 3)
     }
 
-    func didFailFnSwitch() {
-        guard window?.isVisible == true, fnSwitchTest.isRunning else { return }
-        fnSwitchTest = .retry
-        updateFnTestControls(ready: true)
-    }
-
-    @objc private func startOrCancelFnTest() {
-        guard window?.isVisible == true, testButton.isEnabled else { return }
-        fnSwitchTest = fnSwitchTest.isRunning ? .idle : .waitingForFn
-        completedAt = nil
-        updateFnTestControls(ready: true)
-    }
-
-    private func updateFnTestControls(ready: Bool) {
-        testButton.isEnabled = ready || fnSwitchTest.isRunning
-        testButton.title = fnSwitchTest.isRunning ? "Cancel Test" : "Start Test"
-        testButton.isHidden = false
-        testPassedLabel.isHidden = true
-        switch fnSwitchTest {
-        case .idle:
-            testDetailLabel.stringValue = ready ? "Try switching with Fn or Globe." : "Complete the steps above to test."
-        case .waitingForFn:
-            testDetailLabel.stringValue = "Tap and release Fn or Globe by itself."
-        case .waitingForSelection:
-            testDetailLabel.stringValue = "Waiting for macOS to report the new layout."
-        case .retry:
-            testDetailLabel.stringValue = "Check that two layouts are available, then tap Fn again."
-        case .passed:
-            testDetailLabel.stringValue = "macOS confirmed the new layout."
-            testButton.isHidden = true
-            testPassedLabel.isHidden = false
-        }
+    @objc private func finishSetup() {
+        guard window?.isVisible == true, !finishButton.isHidden else { return }
+        defaults.set(true, forKey: Self.setupCompletedKey)
+        close()
+        openSettings()
     }
 
     static func openInputMonitoring() {
@@ -224,10 +160,17 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         grantButton.action = #selector(grantAccess)
         keyboardButton.target = self
         keyboardButton.action = #selector(openKeyboardPreferences)
-        testButton.target = self
-        testButton.action = #selector(startOrCancelFnTest)
+        finishButton.target = self
+        finishButton.action = #selector(finishSetup)
+        finishButton.bezelStyle = .rounded
+        finishButton.isHidden = true
+        finishButton.translatesAutoresizingMaskIntoConstraints = false
 
-        let testInstructions = instruction("Test Fn switching (optional)", detail: testDetailLabel)
+        testStatus.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
+        testStatus.textColor = .systemRed
+        let testInstructions = instruction(
+            "3. Test Fn switching (optional)", detail: "Tap and release Fn or Globe to switch layouts."
+        )
         currentLayoutLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         currentLayoutLabel.textColor = .secondaryLabelColor
         currentLayoutLabel.lineBreakMode = .byTruncatingTail
@@ -248,7 +191,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
             ],
             [
                 testInstructions,
-                actionView(button: testButton, status: testPassedLabel)
+                testStatus
             ]
         ])
         grid.translatesAutoresizingMaskIntoConstraints = false
@@ -260,24 +203,24 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         grid.rowSpacing = 22
 
         contentView.addSubview(grid)
+        contentView.addSubview(finishButton)
         NSLayoutConstraint.activate([
             grid.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
             grid.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
-            grid.centerYAnchor.constraint(equalTo: contentView.centerYAnchor)
+            grid.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 24),
+            finishButton.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            finishButton.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -22)
         ])
     }
 
     private func instruction(_ title: String, detail: String) -> NSStackView {
-        instruction(title, detail: NSTextField(labelWithString: detail))
-    }
-
-    private func instruction(_ title: String, detail: NSTextField) -> NSStackView {
         let heading = NSTextField(labelWithString: title)
         heading.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
-        detail.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        detail.textColor = .secondaryLabelColor
+        let detailLabel = NSTextField(labelWithString: detail)
+        detailLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        detailLabel.textColor = .secondaryLabelColor
 
-        let stack = NSStackView(views: [heading, detail])
+        let stack = NSStackView(views: [heading, detailLabel])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 3
