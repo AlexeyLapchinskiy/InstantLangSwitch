@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import Carbon
+import OSLog
 
 enum SelectionCorrection {
     enum Destination {
@@ -17,15 +18,16 @@ enum SelectionCorrection {
         case unchanged
         case selectionChanged
         case couldNotReplace
+        case clipboardUnavailable
 
         var errorDescription: String? {
             switch self {
             case .accessibilityRequired:
-                return "Allow Instant Lang Switch in System Settings → Privacy & Security → Accessibility, then try again."
+                return "In System Settings → Privacy & Security, allow Instant Lang Switch to control apps, then try again. Look for Accessibility or Device Control and Data Access."
             case .secureInput:
                 return "Text correction is unavailable while secure keyboard input is active."
             case .unsupportedField:
-                return "Select text in an editable field that supports Accessibility text replacement."
+                return "Select text in an editable field that exposes its selection to macOS Accessibility."
             case .noSelection:
                 return "Select the text you want to correct first."
             case .incompatibleLayouts:
@@ -38,11 +40,16 @@ enum SelectionCorrection {
                 return "The active selection changed. Select the text and try again."
             case .couldNotReplace:
                 return "The active app couldn’t replace the selected text."
+            case .clipboardUnavailable:
+                return "The clipboard couldn’t be preserved for this edit. Try again after copying plain text."
             }
         }
     }
 
     private static let messagingTimeout: Float = 0.3
+    private static let logger = Logger(subsystem: "com.alexeylapchinskiy.InstantLangSwitch", category: "TextCorrection")
+    private static let selectedTextMarkerRange = "AXSelectedTextMarkerRange"
+    private static var pasteInProgress = false
     static let pairRequirement = "Enable exactly two keyboard layouts in macOS or select two enabled favorites in Layouts. Both must support text correction."
 
     static func layoutPair(in sources: [InputSource], favorites: [String]) -> (first: InputSource, second: InputSource)? {
@@ -71,32 +78,148 @@ enum SelectionCorrection {
         if attribute(kAXSubroleAttribute, of: field) as? String == kAXSecureTextFieldSubrole {
             throw Failure.secureInput
         }
-        var settable: DarwinBoolean = false
         let selectedTextAttribute = kAXSelectedTextAttribute as CFString
-        guard AXUIElementIsAttributeSettable(field, selectedTextAttribute, &settable) == .success,
-              settable.boolValue else { throw Failure.unsupportedField }
-        guard let selection = attribute(kAXSelectedTextAttribute, of: field) as? String, !selection.isEmpty else {
+        guard let selection = selection(in: field) else {
             throw Failure.noSelection
         }
-        let range = attribute(kAXSelectedTextRangeAttribute, of: field)
-        let corrected = try convert(selection, first: first, second: second, preferredDestination: preferredDestination)
-        guard corrected != selection else { throw Failure.unchanged }
+        let corrected = try convert(selection.text, first: first, second: second, preferredDestination: preferredDestination)
+        guard corrected != selection.text else { throw Failure.unchanged }
 
-        guard !IsSecureEventInputEnabled() else { throw Failure.secureInput }
-        guard let focused = focusedField(in: appElement), CFEqual(field, focused),
-              attribute(kAXSelectedTextAttribute, of: field) as? String == selection else {
-            throw Failure.selectionChanged
-        }
-        if let range {
-            guard let currentRange = attribute(kAXSelectedTextRangeAttribute, of: field), CFEqual(range, currentRange) else {
+        func validateSelection() throws {
+            guard !IsSecureEventInputEnabled() else { throw Failure.secureInput }
+            guard let focused = focusedField(in: appElement), CFEqual(field, focused),
+                  let current = Self.selection(in: field), selection.matches(current),
+                  NSWorkspace.shared.frontmostApplication?.processIdentifier == application.processIdentifier else {
                 throw Failure.selectionChanged
             }
         }
-        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == application.processIdentifier else {
-            throw Failure.selectionChanged
+
+        try validateSelection()
+        let canPasteSelection = selection.range != nil && canPaste(into: field)
+        // Web editors can report success before their selected-text setter applies an edit.
+        let preferPaste = canPasteSelection && attribute("AXDOMClassList", of: field) is [String]
+        try replaceSelectedText {
+            guard !preferPaste, selection.rangeAttribute != selectedTextMarkerRange,
+                  isSettable(kAXSelectedTextAttribute, in: field) else { return .attributeUnsupported }
+            return AXUIElementSetAttributeValue(field, selectedTextAttribute, corrected as CFString)
+        } paste: {
+            guard canPasteSelection else { throw Failure.unsupportedField }
+            try paste(corrected, into: application.processIdentifier, validateSelection: validateSelection)
         }
-        guard AXUIElementSetAttributeValue(field, selectedTextAttribute, corrected as CFString) == .success else {
+    }
+
+    static func replaceSelectedText(setAttribute: () -> AXError, paste: () throws -> Void) throws {
+        let status = setAttribute()
+        switch status {
+        case .success:
+            return
+        case .attributeUnsupported, .notImplemented, .illegalArgument:
+            try paste()
+        default:
+            logger.error("Selected text replacement failed with AX status \(status.rawValue).")
             throw Failure.couldNotReplace
+        }
+    }
+
+    private struct Selection {
+        let text: String
+        let range: CFTypeRef?
+        let rangeAttribute: String
+
+        func matches(_ other: Selection) -> Bool {
+            guard text == other.text, rangeAttribute == other.rangeAttribute else { return false }
+            if let range, let otherRange = other.range { return CFEqual(range, otherRange) }
+            return range == nil && other.range == nil
+        }
+    }
+
+    private static func selection(in field: AXUIElement) -> Selection? {
+        let selected = attribute(kAXSelectedTextAttribute, of: field) as? String
+        if let selected, !selected.isEmpty, let range = attribute(kAXSelectedTextRangeAttribute, of: field) {
+            var bounds = CFRange()
+            if CFGetTypeID(range) == AXValueGetTypeID(),
+               AXValueGetValue(range as! AXValue, .cfRange, &bounds), bounds.length > 0 {
+                return Selection(text: selected, range: range, rangeAttribute: kAXSelectedTextRangeAttribute)
+            }
+        }
+        // Web editors may represent the selection with text markers instead of a character range.
+        if let markerRange = attribute(selectedTextMarkerRange, of: field) {
+            var value: CFTypeRef?
+            if AXUIElementCopyParameterizedAttributeValue(
+                field, "AXStringForTextMarkerRange" as CFString, markerRange, &value
+            ) == .success, let text = value as? String, !text.isEmpty {
+                return Selection(text: text, range: markerRange, rangeAttribute: selectedTextMarkerRange)
+            }
+        }
+        guard let selected, !selected.isEmpty else { return nil }
+        return Selection(text: selected, range: nil, rangeAttribute: kAXSelectedTextRangeAttribute)
+    }
+
+    private static func isSettable(_ name: String, in field: AXUIElement) -> Bool {
+        var settable = DarwinBoolean(false)
+        return AXUIElementIsAttributeSettable(field, name as CFString, &settable) == .success && settable.boolValue
+    }
+
+    private static func canPaste(into field: AXUIElement) -> Bool {
+        let role = attribute(kAXRoleAttribute, of: field) as? String
+        if [kAXTextFieldRole, kAXTextAreaRole, kAXComboBoxRole].contains(role ?? ""),
+           isSettable(kAXValueAttribute, in: field) { return true }
+        guard let editable = attribute("AXEditableAncestor", of: field),
+              CFGetTypeID(editable) == AXUIElementGetTypeID() else { return false }
+        return true
+    }
+
+    private static func paste(_ text: String, into pid: pid_t, validateSelection: () throws -> Void) throws {
+        guard !pasteInProgress else { throw Failure.couldNotReplace }
+        guard CGPreflightPostEventAccess() else { throw Failure.accessibilityRequired }
+        guard let source = CGEventSource(stateID: .privateState),
+              let down = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: false) else {
+            throw Failure.couldNotReplace
+        }
+        down.flags = .maskCommand
+        up.flags = .maskCommand
+        let pasteCharacter: [UniChar] = [0x76]
+        down.keyboardSetUnicodeString(stringLength: pasteCharacter.count, unicodeString: pasteCharacter)
+        up.keyboardSetUnicodeString(stringLength: pasteCharacter.count, unicodeString: pasteCharacter)
+
+        let restore = try stagePaste(text, on: .general, validateSelection: validateSelection)
+        pasteInProgress = true
+        down.postToPid(pid)
+        up.postToPid(pid)
+        // Let the target consume the paste and preserve anything copied in the meantime.
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(500)) {
+            restore()
+            pasteInProgress = false
+        }
+    }
+
+    static func stagePaste(_ text: String, on board: NSPasteboard, validateSelection: () throws -> Void) throws -> () -> Void {
+        let originalCount = board.changeCount
+        let saved = try (board.pasteboardItems ?? []).map { item in
+            let copy = NSPasteboardItem()
+            for type in item.types {
+                guard let data = item.data(forType: type), copy.setData(data, forType: type) else {
+                    throw Failure.clipboardUnavailable
+                }
+            }
+            return copy
+        }
+        try validateSelection()
+        guard board.changeCount == originalCount else { throw Failure.clipboardUnavailable }
+        let temporary = NSPasteboardItem()
+        guard temporary.setString(text, forType: .string) else { throw Failure.clipboardUnavailable }
+        temporary.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.TransientType"))
+        let clearedCount = board.prepareForNewContents(with: .currentHostOnly)
+        guard board.writeObjects([temporary]) else {
+            if board.changeCount == clearedCount, !saved.isEmpty { board.writeObjects(saved) }
+            throw Failure.clipboardUnavailable
+        }
+        let temporaryCount = board.changeCount
+        return {
+            guard board.changeCount == temporaryCount else { return }
+            board.clearContents()
+            if !saved.isEmpty { board.writeObjects(saved) }
         }
     }
 

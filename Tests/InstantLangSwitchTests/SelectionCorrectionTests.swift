@@ -1,3 +1,5 @@
+import AppKit
+import ApplicationServices
 import Carbon
 import Foundation
 import XCTest
@@ -53,6 +55,51 @@ final class SelectionCorrectionTests: XCTestCase {
         ]
 
         XCTAssertEqual(SelectionCorrection.characterMap(from: candidates), ["a": "ф"])
+    }
+
+    func testFallsBackWhenTheEditorDoesNotExposeSelectedTextReplacement() throws {
+        for status in [AXError.attributeUnsupported, .notImplemented, .illegalArgument] {
+            var pasted = false
+            try SelectionCorrection.replaceSelectedText(setAttribute: { status }, paste: { pasted = true })
+            XCTAssertTrue(pasted)
+        }
+    }
+
+    func testDoesNotRepeatAnAppliedOrUncertainAccessibilityEdit() throws {
+        var pasted = false
+        try SelectionCorrection.replaceSelectedText(setAttribute: { .success }, paste: { pasted = true })
+        XCTAssertThrowsError(try SelectionCorrection.replaceSelectedText(
+            setAttribute: { .cannotComplete }, paste: { pasted = true }
+        ))
+        XCTAssertFalse(pasted)
+    }
+
+    func testTemporaryPasteRestoresAllClipboardTypes() throws {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        let item = NSPasteboardItem()
+        let data = Data(#"{\rtf1\ansi original}"#.utf8)
+        item.setString("original", forType: .string)
+        item.setData(data, forType: .rtf)
+        XCTAssertTrue(board.writeObjects([item]))
+
+        let restore = try SelectionCorrection.stagePaste("Привет", on: board, validateSelection: {})
+        XCTAssertEqual(board.string(forType: .string), "Привет")
+        restore()
+
+        XCTAssertEqual(board.string(forType: .string), "original")
+        XCTAssertEqual(board.data(forType: .rtf), data)
+    }
+
+    func testTemporaryPasteLeavesNewClipboardContentsAlone() throws {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        let restore = try SelectionCorrection.stagePaste("Привет", on: board, validateSelection: {})
+        board.clearContents()
+        board.setString("copied during paste", forType: .string)
+        restore()
+
+        XCTAssertEqual(board.string(forType: .string), "copied during paste")
     }
 
     private func layoutData(for id: String) throws -> Data {

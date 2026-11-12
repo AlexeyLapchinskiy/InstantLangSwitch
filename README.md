@@ -30,7 +30,7 @@ Choose **Settings…** from the Instant Lang Switch menu bar icon and turn on **
 - In **Settings → General**, enable **Show active layout in the menu bar** to see its language code. Click the menu bar item to select any enabled layout directly.
 - In **Settings → App Rules**, add an app and choose the layout to select when it becomes active. A manual switch applies until you enter an app with a default again.
 - In **Settings → Shortcuts**, record **Additional layout switch** or **Correct selected text**. Use Command, Control or Option with another key.
-- Text correction works both ways between two enabled favorite layouts or the only two layouts enabled in macOS. Select editable text and press the shortcut. If the direction is unclear, switch to the layout you want to convert to first. Approve Accessibility access on first use. Correction uses physical key positions and preserves characters it cannot map. It works in editable fields that support Accessibility text replacement and leaves secure fields alone.
+- Text correction works both ways between two enabled favorite layouts or the only two layouts enabled in macOS. Select editable text and press the shortcut. If the direction is unclear, switch to the layout you want to convert to first. Approve Accessibility access on first use. Correction uses physical key positions and preserves characters it cannot map. In editors that need a paste, the app temporarily uses the clipboard and restores its previous contents. Secure fields are excluded.
 
 ## Build from source
 
